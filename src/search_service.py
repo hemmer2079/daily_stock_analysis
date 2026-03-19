@@ -269,7 +269,14 @@ class TavilySearchProvider(BaseSearchProvider):
     def __init__(self, api_keys: List[str]):
         super().__init__(api_keys, "Tavily")
     
-    def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
+    def _do_search(
+        self,
+        query: str,
+        api_key: str,
+        max_results: int,
+        days: int = 7,
+        topic: Optional[str] = None,
+    ) -> SearchResponse:
         """执行 Tavily 搜索"""
         try:
             from tavily import TavilyClient
@@ -286,13 +293,19 @@ class TavilySearchProvider(BaseSearchProvider):
             client = TavilyClient(api_key=api_key)
             
             # 执行搜索（优化：使用advanced深度、限制最近几天）
+            search_kwargs: Dict[str, Any] = {
+                "query": query,
+                "search_depth": "advanced",  # advanced 获取更多结果
+                "max_results": max_results,
+                "include_answer": False,
+                "include_raw_content": False,
+                "days": days,  # 搜索最近天数的内容
+            }
+            if topic is not None:
+                search_kwargs["topic"] = topic
+
             response = client.search(
-                query=query,
-                search_depth="advanced",  # advanced 获取更多结果
-                max_results=max_results,
-                include_answer=False,
-                include_raw_content=False,
-                days=days,  # 搜索最近天数的内容
+                **search_kwargs,
             )
             
             # 记录原始响应到日志
@@ -307,7 +320,7 @@ class TavilySearchProvider(BaseSearchProvider):
                     snippet=item.get('content', '')[:500],  # 截取前500字
                     url=item.get('url', ''),
                     source=self._extract_domain(item.get('url', '')),
-                    published_date=item.get('published_date'),
+                    published_date=item.get('published_date') or item.get('publishedDate'),
                 ))
             
             return SearchResponse(
@@ -329,6 +342,53 @@ class TavilySearchProvider(BaseSearchProvider):
                 provider=self.name,
                 success=False,
                 error_message=error_msg
+            )
+
+    def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        days: int = 7,
+        topic: Optional[str] = None,
+    ) -> SearchResponse:
+        """执行 Tavily 搜索，可按调用方选择是否启用新闻 topic。"""
+        if topic is None:
+            return super().search(query, max_results=max_results, days=days)
+
+        api_key = self._get_next_key()
+        if not api_key:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self._name,
+                success=False,
+                error_message=f"{self._name} 未配置 API Key"
+            )
+
+        start_time = time.time()
+        try:
+            response = self._do_search(query, api_key, max_results, days=days, topic=topic)
+            response.search_time = time.time() - start_time
+
+            if response.success:
+                self._record_success(api_key)
+                logger.info(f"[{self._name}] 搜索 '{query}' 成功，返回 {len(response.results)} 条结果，耗时 {response.search_time:.2f}s")
+            else:
+                self._record_error(api_key)
+
+            return response
+
+        except Exception as e:
+            self._record_error(api_key)
+            elapsed = time.time() - start_time
+            logger.error(f"[{self._name}] 搜索 '{query}' 失败: {e}")
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self._name,
+                success=False,
+                error_message=str(e),
+                search_time=elapsed
             )
     
     @staticmethod
@@ -2039,8 +2099,12 @@ class SearchService:
         for provider in self._providers:
             if not provider.is_available:
                 continue
-            
-            response = provider.search(query, provider_max_results, days=search_days)
+
+            search_kwargs: Dict[str, Any] = {}
+            if isinstance(provider, TavilySearchProvider):
+                search_kwargs["topic"] = "news"
+
+            response = provider.search(query, provider_max_results, days=search_days, **search_kwargs)
             filtered_response = self._filter_news_response(
                 response,
                 search_days=search_days,
@@ -2230,12 +2294,20 @@ class SearchService:
             provider_index += 1
             
             logger.info(f"[情报搜索] {dim['desc']}: 使用 {provider.name}")
-            
-            response = provider.search(
-                dim['query'],
-                max_results=provider_max_results,
-                days=search_days,
-            )
+
+            if isinstance(provider, TavilySearchProvider):
+                response = provider.search(
+                    dim['query'],
+                    max_results=provider_max_results,
+                    days=search_days,
+                    topic="news",
+                )
+            else:
+                response = provider.search(
+                    dim['query'],
+                    max_results=provider_max_results,
+                    days=search_days,
+                )
             filtered_response = self._filter_news_response(
                 response,
                 search_days=search_days,
