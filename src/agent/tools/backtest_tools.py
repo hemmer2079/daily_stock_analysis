@@ -3,7 +3,8 @@
 Backtest tools — read-only tools exposing backtest summaries to the agent.
 
 Tools:
-- get_strategy_backtest_summary: overall strategy performance stats
+- get_skill_backtest_summary: overall skill performance stats
+- get_strategy_backtest_summary: legacy alias of the skill summary tool
 - get_stock_backtest_summary: backtest results for a specific stock
 """
 
@@ -26,11 +27,11 @@ def _get_backtest_service():
 
 
 # ============================================================
-# get_strategy_backtest_summary
+# get_skill_backtest_summary / get_strategy_backtest_summary
 # ============================================================
 
-def _handle_get_strategy_backtest_summary(eval_window_days: int = 30) -> dict:
-    """Get overall strategy backtest summary.
+def _handle_get_skill_backtest_summary(eval_window_days: int = 30) -> dict:
+    """Get overall skill backtest summary.
 
     Returns aggregated stats: win_rate, direction_accuracy, avg_return, etc.
     """
@@ -55,14 +56,14 @@ def _handle_get_strategy_backtest_summary(eval_window_days: int = 30) -> dict:
             "computed_at": summary.get("computed_at"),
         }
     except Exception as exc:
-        logger.warning("[backtest_tools] get_strategy_backtest_summary error: %s", exc)
+        logger.warning("[backtest_tools] get_skill_backtest_summary error: %s", exc)
         return {"error": f"Failed to retrieve backtest summary: {exc}"}
 
 
-get_strategy_backtest_summary_tool = ToolDefinition(
-    name="get_strategy_backtest_summary",
+get_skill_backtest_summary_tool = ToolDefinition(
+    name="get_skill_backtest_summary",
     description=(
-        "Get overall strategy backtest performance summary (win rate, direction accuracy, "
+        "Get overall skill backtest performance summary (win rate, direction accuracy, "
         "avg return, stop-loss/take-profit trigger rates). Read-only, does not trigger new backtests."
     ),
     parameters=[
@@ -74,7 +75,27 @@ get_strategy_backtest_summary_tool = ToolDefinition(
             default=30,
         ),
     ],
-    handler=_handle_get_strategy_backtest_summary,
+    handler=_handle_get_skill_backtest_summary,
+    category="data",
+)
+
+
+get_strategy_backtest_summary_tool = ToolDefinition(
+    name="get_strategy_backtest_summary",
+    description=(
+        "Legacy alias of get_skill_backtest_summary. Returns the overall backtest "
+        "performance summary without triggering new backtests."
+    ),
+    parameters=[
+        ToolParameter(
+            name="eval_window_days",
+            type="integer",
+            description="Evaluation window in days (default: 30). How many trading days after signal to evaluate.",
+            required=False,
+            default=30,
+        ),
+    ],
+    handler=_handle_get_skill_backtest_summary,
     category="data",
 )
 
@@ -173,6 +194,7 @@ get_stock_backtest_summary_tool = ToolDefinition(
 # ============================================================
 
 ALL_BACKTEST_TOOLS = [
+    get_skill_backtest_summary_tool,
     get_strategy_backtest_summary_tool,
     get_stock_backtest_summary_tool,
 ]
